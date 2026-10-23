@@ -1,11 +1,9 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const base = String(window.CPIOA_CONFIG?.apiBase || '').replace(/\/$/, '');
-const keyPattern = /^CPIOA(?:-[0-9A-HJKMNP-TV-Z]{8}){4}$/;
-const storageKey = 'cpioa-current-key:' + location.pathname;
 const date = seconds => new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(seconds * 1000));
 let token = '', config = null, page = 1, total = 0, loadingList = 0;
-let widgetId = null, challengeToken = '', pendingAction = null, connecting = false;
+let pendingAction = null, connecting = false;
 
 function message(id, text = '', type = '') {
   $(id).textContent = text;
@@ -45,6 +43,7 @@ async function api(path, options = {}) {
   if (!response.ok || result.ok !== true) {
     if (response.status === 401 && options.admin) sessionEnded();
     let text = result.error?.message || 'Não foi possível concluir. Tente novamente.';
+    if (result.error?.code === 'KEY_PAUSED') text = 'Esta key está pausada.';
     if (response.status === 429) {
       const retry = Number(response.headers.get('Retry-After'));
       if (retry > 0) text += ` Tente em ${Math.max(1, Math.ceil(retry / 60))} min.`;
@@ -59,7 +58,6 @@ async function busy(button, work) {
   try { await work(); }
   finally {
     button.disabled = false; button.removeAttribute('aria-busy');
-    if (button === $('generate')) button.disabled = !config?.publicGeneration;
   }
 }
 async function copy(value, button, field) {
@@ -68,70 +66,32 @@ async function copy(value, button, field) {
   catch { field.focus(); field.select(); button.textContent = 'Selecione e copie a key'; }
   setTimeout(() => { button.textContent = old; }, 2200);
 }
-function displayKey(result, save = true) {
-  $('generated').hidden = false; $('generated-key').value = result.key;
-  $('expiry').textContent = result.license.expiresAt ? 'Válida até ' + date(result.license.expiresAt) : 'Sem prazo de validade';
-  $('generate').firstElementChild.textContent = 'Gerar outra key';
-  if (save) try { sessionStorage.setItem(storageKey, JSON.stringify(result)); } catch { /* Storage may be disabled. */ }
-}
-function setTab(verify) {
-  $('generate-view').hidden = verify; $('verify-view').hidden = !verify;
-  for (const [id, active] of [['tab-generate', !verify], ['tab-verify', verify]]) {
-    $(id).classList.toggle('active', active); $(id).setAttribute('aria-pressed', String(active));
-  }
-}
 function setConfig(value) {
   config = value;
-  $('duration').textContent = config.keyHours === null ? 'Sem expiração' : config.keyHours % 24 === 0
-    ? `${config.keyHours / 24} ${config.keyHours === 24 ? 'dia' : 'dias'}` : `${config.keyHours} horas`;
   $('service-banner').hidden = !config.accessPaused;
-  if (!$('generate').hasAttribute('aria-busy')) $('generate').disabled = !config.publicGeneration;
-  $('connection').textContent = config.accessPaused ? 'Acesso temporariamente pausado'
-    : config.publicGeneration ? 'Pronto para gerar seu acesso' : 'Geração temporariamente pausada';
-  $('connection-dot').className = 'status-dot' + (config.accessPaused || !config.publicGeneration ? ' pending' : '');
+  $('connection').textContent = config.accessPaused ? 'Acesso temporariamente pausado' : 'Serviço de keys online';
+  $('connection-dot').className = 'status-dot' + (config.accessPaused ? ' pending' : '');
   $('access-state').textContent = config.accessPaused ? 'Pausado. Nenhuma key libera acesso.' : 'Ativo. Keys válidas liberam acesso.';
-  $('generation-state').textContent = config.accessPaused ? 'Indisponível durante a pausa geral.'
-    : config.publicGeneration ? 'Aberta para os visitantes.' : 'Pausada. As keys existentes continuam válidas.';
+  $('generation-state').textContent = 'Somente o administrador pode gerar e entregar keys.';
   $('toggle-access').textContent = config.accessPaused ? 'Reativar todos os acessos' : 'Pausar todos os acessos';
-  $('toggle-generation').textContent = config.generationPaused ? 'Reabrir geração' : 'Pausar geração';
-  $('toggle-access').disabled = false; $('toggle-generation').disabled = false;
+  $('toggle-access').disabled = false;
   $('retry-connection').hidden = true;
 }
 async function refreshConfig() {
   if (connecting) return;
   connecting = true;
   try {
-    const value = await api('/v1/config');
-    if (value.turnstileSiteKey && widgetId === null) await turnstile(value.turnstileSiteKey);
-    setConfig(value);
-    message('generate-message', value.accessPaused ? 'O acesso está pausado. Guarde sua key para usar quando o serviço voltar.'
-      : !value.publicGeneration ? 'A geração de keys está pausada. Volte mais tarde.' : '');
+    setConfig(await api('/v1/config'));
+    message('service-message', config.accessPaused ? 'O acesso está temporariamente pausado. Tente novamente mais tarde.' : '');
   } catch (error) {
-    config = null; $('generate').disabled = true;
+    config = null;
     $('connection').textContent = base ? 'Serviço indisponível' : 'Serviço em configuração';
     $('connection-dot').className = 'status-dot offline'; $('retry-connection').hidden = !base;
-    message('generate-message', error.message, 'error');
+    message('service-message', error.message, 'error');
   } finally { connecting = false; }
 }
 
-$('tab-generate').addEventListener('click', () => setTab(false));
-$('tab-verify').addEventListener('click', () => setTab(true));
 $('retry-connection').addEventListener('click', refreshConfig);
-$('generate').addEventListener('click', () => busy($('generate'), async () => {
-  message('generate-message', 'Gerando seu acesso…');
-  try {
-    if (config?.turnstileSiteKey && !challengeToken) throw new Error('Conclua a verificação acima para continuar.');
-    const result = await api('/v1/keys', { method: 'POST', body: { turnstileToken: challengeToken } });
-    displayKey(result); message('generate-message', 'Pronto. Copie e guarde sua key.', 'success');
-  } catch (error) {
-    if (error.code === 'GENERATION_CLOSED') await refreshConfig();
-    message('generate-message', error.message, 'error');
-  } finally {
-    if (widgetId !== null) { window.turnstile.reset(widgetId); challengeToken = ''; }
-  }
-}));
-$('copy').addEventListener('click', () => copy($('generated-key').value, $('copy'), $('generated-key')));
-$('generated-key').addEventListener('click', event => event.target.select());
 $('verify-form').addEventListener('submit', event => {
   event.preventDefault();
   busy(event.submitter || event.target.querySelector('button'), async () => {
@@ -241,13 +201,6 @@ $('toggle-access').addEventListener('click', () => {
       : 'Todas as keys deixarão de liberar acesso na próxima validação. Você poderá reativar o serviço quando quiser.',
     '/v1/admin/settings', { accessPaused: !config.accessPaused });
 });
-$('toggle-generation').addEventListener('click', () => busy($('toggle-generation'), async () => {
-  if (!config) return;
-  try {
-    const result = await api('/v1/admin/settings', { method: 'POST', admin: true, body: { generationPaused: !config.generationPaused } });
-    setConfig(result); message('settings-message', 'Geração pública atualizada.', 'success');
-  } catch (error) { message('settings-message', error.message, 'error'); }
-}));
 $('action-cancel').addEventListener('click', () => $('action-dialog').close());
 $('action-dialog').addEventListener('close', () => { pendingAction = null; });
 $('action-confirm').addEventListener('click', () => busy($('action-confirm'), async () => {
@@ -258,29 +211,6 @@ $('action-confirm').addEventListener('click', () => busy($('action-confirm'), as
     $('action-dialog').close(); await loadKeys();
   } catch (error) { message('action-message', error.message, 'error'); }
 }));
-async function turnstile(siteKey) {
-  if (!window.turnstile) await new Promise((resolve, reject) => {
-    const script = document.createElement('script'); script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-    script.onload = resolve; script.onerror = () => { script.remove(); reject(new Error('Não foi possível abrir a verificação. Tente reconectar.')); };
-    document.head.append(script);
-  });
-  await new Promise(resolve => window.turnstile.ready(resolve));
-  widgetId = window.turnstile.render('#challenge', { sitekey: siteKey, theme: 'dark', size: 'flexible', action: 'generate',
-    callback: value => { challengeToken = value; }, 'expired-callback': () => { challengeToken = ''; },
-    'error-callback': () => { challengeToken = ''; message('generate-message', 'Refaça a verificação para continuar.', 'error'); } });
-}
-(async () => {
-  await refreshConfig();
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(storageKey));
-    if (keyPattern.test(saved?.key) && saved.license && (saved.license.expiresAt === null || saved.license.expiresAt > Date.now() / 1000)) {
-      displayKey(saved, false);
-      if (config) {
-        try { await api('/v1/verify', { method: 'POST', body: { key: saved.key } }); }
-        catch (error) { message('generate-message', error.message, 'error'); }
-      }
-    }
-  } catch { /* No usable key saved in this tab. */ }
-})();
+refreshConfig();
 setInterval(() => { if (base && !document.hidden && !token) refreshConfig(); }, 60000);
 document.addEventListener('visibilitychange', () => { if (base && !document.hidden) { if (token) loadKeys(); else refreshConfig(); } });
