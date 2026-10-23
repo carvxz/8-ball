@@ -1,12 +1,12 @@
 # Cpioa Access
 
-Site: https://carvxz.github.io/8-ball/
-API: https://cpioa-keys-api.saiasporu.workers.dev
+Site de geração e verificação de keys do Cpioa.
 
-Somente o administrador autenticado gera keys e as entrega aos usuários. A página pública permite verificar uma key recebida e mostra como entrar no app Cpioa. A administração permite definir validade, pausar, reativar e revogar keys, além de pausar o acesso geral.
+- Site: https://carvxz.github.io/8-ball/
+- API: https://cpioa-keys-api.saiasporu.workers.dev
 
-O app Android valida a key por HTTPS em POST /v1/verify e renova a autorização usando checkAfterSeconds. Uma key salva no aparelho precisa de nova validação após reiniciar o processo.
+Keys públicas sem expiração, painel administrativo com pausa individual, reativação, pausa geral, controle de geração e revogação. Interface responsiva para PC e celular.
 
-Na Cloudflare, PUBLIC_GENERATION=false mantém a geração anônima desativada na API. As keys continuam sendo emitidas em POST /v1/admin/keys, com sessão administrativa. A senha fica em um Secret da Cloudflare e não é incluída no site nem no APK.
+Os arquivos da página ficam na raiz para publicação pelo GitHub Pages: branch `main`, pasta `/ (root)`. O arquivo `config.js` contém a URL pública da API. A API e o banco de dados ficam na Cloudflare.
 
-Os arquivos da página são publicados por GitHub Pages a partir da branch main, pasta raiz. config.js contém apenas a URL pública da API. API e banco ficam na Cloudflare.
+A senha administrativa é definida pelo proprietário como Secret na Cloudflare. Nenhuma senha administrativa está neste repositório. A integração do script Lua será feita em uma etapa separada.

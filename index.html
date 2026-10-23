@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Verifique sua key e confira seu acesso ao app Cpioa.">
+  <meta name="description" content="Gere sua key Cpioa gratuitamente, sem expiração. Acesse, copie e confira seu código no PC ou no celular.">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self'; connect-src 'self' https: http://127.0.0.1:* http://localhost:*; frame-src https://challenges.cloudflare.com; img-src 'self' data:; base-uri 'none'; form-action 'none'; object-src 'none'">
   <meta name="theme-color" content="#101413">
@@ -11,7 +11,7 @@
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./style.css">
   <script src="./config.js" defer></script>
-  <script src="./app.js?v=20261022-admin-keys" defer></script>
+  <script src="./app.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Ir para o conteúdo</a>
@@ -24,30 +24,42 @@
       <div id="service-banner" class="service-banner" role="status" hidden>O acesso está temporariamente pausado. Sua key será mantida para quando o serviço voltar.</div>
       <section id="public-view" class="hero">
         <div class="intro">
-          <div class="eyebrow"><span class="tiny-line"></span> SUA KEY. SEU PAINEL.</div>
-          <h1>Sua key.<br>Seu acesso.<br><em>Cpioa.</em></h1>
-          <p class="lead">Confira sua key.<br>Acesse o app Cpioa.</p>
-          <div class="benefits"><span><i aria-hidden="true">✓</i> Acesso por key</span><span><i aria-hidden="true">✓</i> Validação online</span></div>
-          <div class="edition"><span class="edition-number">01 /</span><span>UM CÓDIGO.<br>SEU ACESSO AO CPIOA.</span></div>
+          <div class="eyebrow"><span class="tiny-line"></span> UMA KEY. SUA PRÓXIMA JOGADA.</div>
+          <h1>Sua key.<br>Seu acesso.<br><em>Sem prazo.</em></h1>
+          <p class="lead">Seu acesso ao Cpioa começa aqui.<br>Gere uma key gratuita e guarde para usar.</p>
+          <div class="benefits"><span><i aria-hidden="true">✓</i> Sem expiração</span><span><i aria-hidden="true">✓</i> PC e celular</span></div>
+          <div class="edition"><span class="edition-number">01 /</span><span>UM ACESSO.<br>TODAS AS SUAS JOGADAS.</span></div>
         </div>
         <div class="access-column">
           <section class="key-card" aria-labelledby="card-title">
-            <div class="card-top"><span class="mono">CPIOA / VERIFICAÇÃO DE KEY</span><span class="free-badge">ACESSO</span></div>
+            <div class="card-top"><span class="mono">CPIOA / KEY GENERATOR</span><span class="free-badge">GRÁTIS</span></div>
             <div class="table-art" aria-hidden="true">
               <svg viewBox="0 0 430 155" fill="none"><path class="table-outline" d="M18 20H412V135H18z"/><path class="art-grid" d="M18 58H412M18 96H412M116 20V135M215 20V135M314 20V135"/><path class="aim-trail" d="M72 112 191 44 317 113 376 78"/><path d="m363 74 13 4-7 12" stroke="#c4fa92" stroke-width="1.5"/><circle cx="72" cy="112" r="9" fill="#eff4ec"/><circle cx="191" cy="44" r="6" fill="#c4fa92"/><circle cx="317" cy="113" r="6" fill="#c4fa92"/><circle cx="376" cy="78" r="14" stroke="#c4fa92" stroke-opacity=".35"/><circle cx="376" cy="78" r="4" fill="#c4fa92"/></svg>
             </div>
             <div class="card-content">
-              <section id="verify-view">
-                <h2 id="card-title">Confira sua key.</h2>
-                <p class="muted">Verifique se sua key está ativa para acessar o app.</p>
+              <div class="tabs" role="group" aria-label="Escolha uma ação"><button id="tab-generate" class="tab active" aria-pressed="true">Gerar key</button><button id="tab-verify" class="tab" aria-pressed="false">Verificar key</button></div>
+              <section id="generate-view">
+                <h2 id="card-title">Pronto para a próxima tacada?</h2>
+                <p class="muted">Sem conta, sem pagamento. Só gerar e usar.</p>
+                <dl class="key-details"><div><dt>VALIDADE</dt><dd id="duration">Sem expiração</dd></div><div><dt>PLATAFORMA</dt><dd>PC + Mobile</dd></div></dl>
+                <div id="challenge"></div>
+                <button id="generate" class="button primary wide" disabled><span>Gerar minha key</span><span aria-hidden="true">↗</span></button>
+                <div id="generated" class="generated" hidden>
+                  <div class="result-title"><span class="status-dot"></span> Sua key está pronta</div>
+                  <label class="sr-only" for="generated-key">Sua key gerada</label><textarea id="generated-key" class="key-output" rows="3" readonly spellcheck="false"></textarea>
+                  <div class="result-actions"><span id="expiry" class="muted small"></span><button id="copy" class="button secondary">Copiar key <span aria-hidden="true">↗</span></button></div>
+                </div>
+                <p id="generate-message" class="message" role="status" aria-live="polite"></p>
+              </section>
+              <section id="verify-view" hidden>
+                <h2>Confira seu acesso.</h2><p class="muted">Veja se sua key ainda está válida.</p>
                 <form id="verify-form"><label for="verify-key">Sua key</label><textarea id="verify-key" rows="3" placeholder="CPIOA-…" required maxlength="100" autocomplete="off" spellcheck="false"></textarea><button class="button primary wide" type="submit">Verificar key <span aria-hidden="true">↗</span></button></form>
                 <p id="verify-message" class="message" role="status" aria-live="polite"></p>
-                <p id="service-message" class="message" role="status" aria-live="polite"></p>
               </section>
             </div>
-            <div class="card-bottom"><span id="connection-dot" class="status-dot pending"></span><span id="connection" role="status">Conectando ao serviço…</span><button id="retry-connection" class="text-button" hidden>Reconectar ↻</button><span class="mono version">V.02</span></div>
+            <div class="card-bottom"><span id="connection-dot" class="status-dot pending"></span><span id="connection" role="status">Conectando ao serviço…</span><button id="retry-connection" class="text-button" hidden>Reconectar ↻</button><span class="mono version">V.01</span></div>
           </section>
-          <p class="card-note">Keys ativas liberam o acesso.<br>O status é conferido online.</p>
+          <p class="card-note">Guarde sua key: ela não vence.<br>O administrador pode pausar ou revogar o acesso.</p>
         </div>
       </section>
       <section id="admin-view" class="admin-view" hidden>
@@ -55,18 +67,18 @@
         <div class="stats"><div><span>TOTAL DE KEYS</span><strong id="stat-total">—</strong></div><div><span>ATIVAS</span><strong id="stat-active">—</strong></div><div><span>PAUSADAS</span><strong id="stat-paused">—</strong></div><div><span>REVOGADAS</span><strong id="stat-revoked">—</strong></div></div>
         <div class="service-controls">
           <section class="control-panel"><div><h2>Acesso ao Cpioa</h2><p id="access-state" class="muted">Carregando…</p></div><button id="toggle-access" class="button secondary" disabled>Pausar todos os acessos</button></section>
-          <section class="control-panel"><div><h2>Emissão de keys</h2><p id="generation-state" class="muted">Carregando…</p></div><span class="free-badge">SOMENTE ADMIN</span></section>
+          <section class="control-panel"><div><h2>Geração pública</h2><p id="generation-state" class="muted">Carregando…</p></div><button id="toggle-generation" class="button secondary" disabled>Pausar geração</button></section>
         </div>
         <p id="settings-message" class="message" role="status"></p>
         <div class="admin-grid"><section class="panel"><h2>Gerar um acesso</h2><form id="admin-generate"><label for="key-label">Identificação <span class="muted">(opcional)</span></label><input id="key-label" maxlength="60" placeholder="Ex.: acesso de teste"><label for="key-hours">Validade</label><select id="key-hours"><option value="never">Sem expiração</option><option value="24">24 horas</option><option value="168">7 dias</option><option value="720">30 dias</option></select><button class="button primary wide">Gerar key ↗</button></form><div id="admin-result" hidden><label for="admin-key">Copie agora; a key completa aparece uma vez.</label><textarea id="admin-key" readonly rows="3" spellcheck="false"></textarea><button id="admin-copy" class="button secondary">Copiar key</button></div><p id="admin-generate-message" class="message" role="status"></p></section>
         <section class="panel key-list"><div class="list-heading"><h2>Keys geradas</h2><button id="refresh" class="text-button">Atualizar ↻</button></div><form id="filter-form" class="filters"><label class="sr-only" for="search">Pesquisar keys</label><input id="search" maxlength="60" placeholder="Pesquisar identificação ou parte visível da key"><label class="sr-only" for="filter-status">Filtrar status</label><select id="filter-status"><option value="all">Todas</option><option value="active">Ativas</option><option value="paused">Pausadas</option><option value="expired">Expiradas</option><option value="revoked">Revogadas</option></select><button class="button secondary">Filtrar</button></form><div class="table-scroll"><table><thead><tr><th>Key / identificação</th><th>Status</th><th>Validade</th><th><span class="sr-only">Ações</span></th></tr></thead><tbody id="key-rows"></tbody></table></div><p id="list-message" class="message" role="status"></p><div class="pagination"><button id="previous" class="text-button" disabled>← Anterior</button><span id="page-label">Página 1</span><button id="next" class="text-button" disabled>Próxima →</button></div></section></div>
       </section>
-      <section id="como-usar" class="how"><div class="how-heading"><span class="eyebrow">DA KEY PARA O APP</span><h2>Três passos. Pronto.</h2></div><ol><li><span class="step-number">01</span><div><h3>Abra o app</h3><p>Inicie o Cpioa no seu aparelho.</p></div></li><li><span class="step-number">02</span><div><h3>Insira sua key</h3><p>Cole a key completa na tela de login.</p></div></li><li><span class="step-number">03</span><div><h3>Confirme o acesso</h3><p>Toque em Entrar. O painel abre quando a key estiver ativa.</p></div></li></ol></section>
+      <section id="como-usar" class="how"><div class="how-heading"><span class="eyebrow">DO SITE PARA O JOGO</span><h2>Três passos. Pronto.</h2></div><ol><li><span class="step-number">01</span><div><h3>Gere sua key</h3><p>Toque no botão para criar seu acesso gratuito.</p></div></li><li><span class="step-number">02</span><div><h3>Copie o código</h3><p>Guarde a key inteira, incluindo o prefixo CPIOA.</p></div></li><li><span class="step-number">03</span><div><h3>Cole no script</h3><p>Abra o script, insira a key e confirme o acesso.</p></div></li></ol></section>
     </main>
     <footer><a class="brand footer-brand" href="#main">Cpioa<span class="brand-dot"></span></a><span>FEITO PARA A SUA PRÓXIMA JOGADA.</span><a href="#main">Voltar ao topo ↑</a></footer>
   </div>
   <dialog id="login-dialog" aria-labelledby="login-title"><form id="login-form"><div class="dialog-top"><span class="eyebrow">ÁREA ADMINISTRATIVA</span><button type="button" id="login-close" class="text-button" aria-label="Fechar">✕</button></div><h2 id="login-title">Bem-vindo de volta.</h2><p class="muted">Entre para acompanhar e gerenciar as keys.</p><label for="admin-password">Senha administrativa</label><input id="admin-password" type="password" autocomplete="current-password" required maxlength="256"><button class="button primary wide">Entrar no painel ↗</button><p id="login-message" class="message" role="status"></p></form></dialog>
   <dialog id="action-dialog" aria-labelledby="action-title"><div class="eyebrow">CONTROLE DE ACESSO</div><h2 id="action-title"></h2><p id="action-label" class="muted"></p><p id="action-description"></p><div class="dialog-actions"><button id="action-cancel" class="button secondary">Cancelar</button><button id="action-confirm" class="button primary">Confirmar</button></div><p id="action-message" class="message" role="status"></p></dialog>
-  <noscript><p class="noscript">Ative o JavaScript para verificar sua key e acessar a administração.</p></noscript>
+  <noscript><p class="noscript">Ative o JavaScript para gerar e verificar keys.</p></noscript>
 </body>
 </html>
