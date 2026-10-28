@@ -14,3 +14,12 @@
 @media(max-width:1100px){.admin-grid{grid-template-columns:1fr}.global-control{flex-direction:row}.stats div{padding:19px}}
 @media(max-width:720px){.game-panels{gap:10px;margin-top:24px}.game-card{padding:15px 12px}.game-card strong{font-size:17px;letter-spacing:-.3px}.game-card code{font-size:10px;margin-bottom:14px}.game-count{font-size:10px;line-height:1.6}.game-card-top{margin-bottom:16px}.game-arrow{display:none}.game-card .product-icon{width:30px;height:30px;font-size:12px}.game-card .pool-icon{font-size:18px}.game-card .fire-icon{font-size:10px}.selected-game h2{font-size:26px}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.stats div:nth-child(5){border-left:0;border-top:1px solid #34402e;grid-column:1/-1}.global-control{flex-wrap:wrap;gap:14px}.global-control .free-badge{font-size:8px;margin:0}.global-control>.button{width:100%;max-width:none;justify-content:center}.admin-view .section-heading h1{font-size:30px;letter-spacing:-1px}.admin-view .section-heading>.button{white-space:nowrap}.prefix-badge{font-size:11px;padding:9px 11px}.overview-content{padding-top:27px}.overview-content>h2{font-size:25px}.topbar nav .text-button{font-size:12px}}
 @media(max-width:390px){.game-panels{gap:7px}.game-card{padding:13px 9px}.game-card strong{font-size:15px}.game-count{font-size:9px}.selected-game{align-items:flex-start}.selected-game p{max-width:215px}.admin-view .section-heading h1{font-size:26px}.admin-view .section-heading>.button{font-size:9px;padding:9px}.brand-caption{display:none}}
+
+/* Registered users and per-key seats. */
+#users-dialog{width:min(680px,calc(100vw - 32px));max-height:calc(100dvh - 40px);overflow:auto}
+.user-limit-control{display:flex;gap:14px;align-items:flex-end;margin:20px 0}
+.user-limit-control>div{flex:1}.user-limit-control input{margin-bottom:0}
+.registered-users{display:grid;gap:10px;margin-top:20px}
+.registered-user{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px;border:1px solid var(--border,#263b4a);border-radius:12px}
+.registered-user strong,.registered-user small{display:block;overflow-wrap:anywhere}.registered-user small{margin-top:6px;color:var(--muted,#a8bdc9);font-size:12px;line-height:1.5}
+@media(max-width:520px){.user-limit-control{align-items:stretch;flex-direction:column}.registered-user{align-items:flex-start}.registered-user .text-button{flex-shrink:0}}

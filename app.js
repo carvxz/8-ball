@@ -3,12 +3,12 @@ const $ = id => document.getElementById(id);
 const base = String(window.CPIOA_CONFIG?.apiBase || '').replace(/\/$/, '');
 const products = { scripts: {name:'Scripts',prefix:'CPIOA'}, '8ball':{name:'8Ball Pool',prefix:'CPIOA8'}, freefire:{name:'Free Fire',prefix:'CPIOAff'} };
 const date = seconds => new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short'}).format(new Date(seconds*1000));
-let token='', config=null, product='scripts', page=1, total=0, loadingList=0, pendingAction=null, connecting=false;
+let token='', config=null, product='scripts', page=1, total=0, loadingList=0, pendingAction=null, connecting=false, usersState=null, usersRevision=0;
 function message(id,text='',type='') { $(id).textContent=text; $(id).className='message '+type; }
 function showAdmin(value) { $('public-view').hidden=value; $('admin-view').hidden=!value; }
 function clearSession() {
-  token=''; loadingList++; pendingAction=null; $('admin-key').value=''; $('admin-result').hidden=true; $('copy-key').value=''; $('key-rows').replaceChildren();
-  for (const id of ['action-dialog','copy-dialog']) if ($(id).open) $(id).close(); showAdmin(false);
+  token=''; loadingList++; usersRevision++; usersState=null; pendingAction=null; $('users-list').replaceChildren(); $('admin-key').value=''; $('admin-result').hidden=true; $('copy-key').value=''; $('key-rows').replaceChildren();
+  for (const id of ['action-dialog','copy-dialog','users-dialog']) if ($(id).open) $(id).close(); showAdmin(false);
 }
 function openLogin() {
   if (token) { showAdmin(true); loadKeys(); return; }
@@ -60,12 +60,13 @@ async function copy(value,button,field) {
 }
 function selectProduct(value) {
   if (!Object.hasOwn(products,value)) return;
+  if($('users-dialog').open)$('users-dialog').close();
   product=value; page=1; loadingList++;
   for (const button of document.querySelectorAll('[data-product]')) { const active=button.dataset.product===value; button.classList.toggle('selected',active); button.setAttribute('aria-pressed',String(active)); }
   $('selected-game-name').textContent=products[value].name;
   $('selected-game-description').textContent=`Keys ${products[value].prefix} exclusivas para ${products[value].name}.`;
   $('selected-game-prefix').textContent=products[value].prefix; $('generate-product').textContent=products[value].name.toUpperCase()+' / '+products[value].prefix;
-  $('admin-key').value=''; $('admin-result').hidden=true; $('key-label').value=''; $('search').value=''; $('filter-status').value='all';
+  $('admin-key').value=''; $('admin-result').hidden=true; $('key-label').value=''; $('key-user-limit').value='1'; $('search').value=''; $('filter-status').value='all';
   $('key-rows').replaceChildren(); message('admin-generate-message'); if(token) loadKeys();
 }
 function setDuration() {
@@ -118,10 +119,12 @@ async function loadKeys() {
       const status=cell(''), badge=document.createElement('span'); badge.className='badge '+item.status;
       badge.textContent={active:'Ativa',paused:'Pausada',expired:'Expirada',revoked:'Revogada',deleted:'Excluída'}[item.status]; status.append(badge); row.append(status);
       row.append(cell(item.expiresAt?date(item.expiresAt):'Sem expiração'));
+      row.append(cell(`${item.userCount||0} / ${item.maxUsers===null?'∞':item.maxUsers}`));
       const actions=cell(''),group=document.createElement('div'); group.className='row-actions';
       if (item.status==='deleted') {
         group.append(rowButton('Restaurar',item,button=>keyAction(item,'restore',button),'key-toggle'));
       } else {
+        group.append(rowButton('Usuários',item,()=>openUsers(item)));
         if(item.canCopy) group.append(rowButton('Copiar',item,button=>copyKey(item,button)));
         if(['active','paused'].includes(item.status)) group.append(rowButton(item.status==='paused'?'Reativar':'Pausar',item,button=>keyAction(item,item.status==='paused'?'resume':'pause',button),'key-toggle'));
         group.append(rowButton('Excluir',item,()=>confirmAction('Excluir esta key?',products[scope].name+' · '+item.displayKey,
@@ -129,7 +132,7 @@ async function loadKeys() {
       }
       actions.append(group); row.append(actions); $('key-rows').append(row);
     }
-    if(!result.items.length) { const row=document.createElement('tr'),td=cell($('filter-status').value==='deleted'?'Nenhuma key excluída neste painel.':'Nenhuma key encontrada neste painel.'); td.colSpan=4; td.className='empty'; row.append(td); $('key-rows').append(row); }
+    if(!result.items.length) { const row=document.createElement('tr'),td=cell($('filter-status').value==='deleted'?'Nenhuma key excluída neste painel.':'Nenhuma key encontrada neste painel.'); td.colSpan=5; td.className='empty'; row.append(td); $('key-rows').append(row); }
     $('page-label').textContent=`Página ${page} de ${Math.max(1,Math.ceil(total/result.pageSize))}`;
     $('previous').disabled=page===1; $('next').disabled=page*result.pageSize>=total; message('list-message');
   } catch(error) { if(revision===loadingList) message('list-message',error.message,'error'); }
@@ -157,10 +160,11 @@ $('admin-generate').addEventListener('submit',event=>{
     message('admin-generate-message');
     const unit=$('duration-unit').value, duration=unit==='never'?null:{value:Number($('key-duration').value),unit};
     try {
-      const result=await api('/v1/admin/keys',{method:'POST',admin:true,body:{product:scope,label:$('key-label').value,duration}});
+      const result=await api('/v1/admin/keys',{method:'POST',admin:true,body:{product:scope,label:$('key-label').value,duration,maxUsers:Number($('key-user-limit').value)}});
       if(scope!==product || !token) return;
       $('admin-key').value=result.key; $('admin-result').hidden=false;
       $('generated-expiry').textContent=result.license.expiresAt?'Válida até '+date(result.license.expiresAt):'Sem prazo de validade';
+      $('generated-expiry').textContent+=` · Até ${result.license.maxUsers} ${result.license.maxUsers===1?'usuário':'usuários'}`;
       message('admin-generate-message','Key de '+products[scope].name+' gerada.','success'); page=1; await loadKeys();
     } catch(error) { if(scope===product) message('admin-generate-message',error.message,'error'); }
   });
@@ -183,12 +187,56 @@ $('action-dialog').addEventListener('close',()=>{pendingAction=null;});
 $('action-confirm').addEventListener('click',()=>busy($('action-confirm'),async()=>{
   if(!pendingAction) return;
   const action=pendingAction;
-  try { const result=await api(action.path,{method:'POST',admin:true,body:action.body}); if(result.accessPaused!==undefined)setConfig(result); $('action-dialog').close(); await loadKeys(); }
+  try { const result=await api(action.path,{method:'POST',admin:true,body:action.body}); if(result.accessPaused!==undefined)setConfig(result); $('action-dialog').close(); await loadKeys(); if(usersState)await loadUsers(); }
   catch(error) { message('action-message',error.message,'error'); }
 }));
 $('copy-close').addEventListener('click',()=>$('copy-dialog').close());
 $('copy-dialog').addEventListener('close',()=>{$('copy-key').value='';});
 $('copy-again').addEventListener('click',()=>copy($('copy-key').value,$('copy-again'),$('copy-key')));
+async function openUsers(item) {
+  usersState={id:item.id,product,displayKey:item.displayKey}; usersRevision++;
+  $('users-key').textContent=products[product].name+' · '+item.displayKey;
+  $('users-list').replaceChildren(); $('users-usage').textContent=''; message('users-message','Carregando usuários…');
+  $('users-dialog').showModal(); await loadUsers();
+}
+async function loadUsers() {
+  if(!usersState||!token)return;
+  const state=usersState,revision=++usersRevision;
+  try {
+    const result=await api(`/v1/admin/keys/${state.id}/users?`+new URLSearchParams({product:state.product}),{admin:true});
+    if(state!==usersState||revision!==usersRevision||!token)return;
+    const license=result.license; $('users-usage').textContent=`${license.userCount} ${license.userCount===1?'vaga ocupada':'vagas ocupadas'} · ${license.maxUsers===null?'Sem limite':`Limite de ${license.maxUsers}`}`;
+    $('users-limit').value=String(license.maxUsers??Math.max(1,license.userCount)); $('users-list').replaceChildren();
+    for(const user of result.users) {
+      const row=document.createElement('div');row.className='registered-user';
+      const details=document.createElement('div'),name=document.createElement('strong'),meta=document.createElement('small');
+      name.textContent=user.name;meta.textContent=`Aparelho ${user.device} · ${user.status==='removed'?'Removido':'Ativo'} · Última entrada: ${date(user.lastSeenAt)}`;
+      details.append(name,meta);row.append(details);
+      const action=document.createElement('button');action.type='button';action.className='text-button';action.textContent=user.status==='removed'?'Reativar':'Remover';
+      action.addEventListener('click',()=>{
+        if(usersState!==state)return;
+        const restoring=user.status==='removed';
+        confirmAction(restoring?'Reativar este usuário?':'Remover este usuário?',user.name+' · Aparelho '+user.device,
+          restoring?'O aparelho voltará a ocupar uma vaga desta key.':'O aparelho será bloqueado na próxima entrada e a vaga ficará livre. Você poderá reativá-lo depois.',
+          `/v1/admin/keys/${state.id}/users/${user.id}/${restoring?'restore':'remove'}`,{product:state.product},restoring?'Reativar':'Remover',!restoring);
+      });row.append(action);$('users-list').append(row);
+    }
+    if(!result.users.length){const empty=document.createElement('p');empty.className='muted';empty.textContent='Nenhum usuário registrado nesta key.';$('users-list').append(empty);}
+    message('users-message');
+  }catch(error){if(state===usersState&&revision===usersRevision)message('users-message',error.message,'error');}
+}
+$('users-close').addEventListener('click',()=>$('users-dialog').close());
+$('users-dialog').addEventListener('close',()=>{usersState=null;usersRevision++;$('users-list').replaceChildren();message('users-message');});
+$('users-limit-form').addEventListener('submit',event=>{
+  event.preventDefault();const state=usersState;if(!state)return;
+  busy(event.submitter,async()=>{
+    try{
+      await api(`/v1/admin/keys/${state.id}/user-limit`,{method:'POST',admin:true,body:{product:state.product,maxUsers:Number($('users-limit').value)}});
+      if(usersState===state){await loadUsers();message('users-message','Limite atualizado.','success');}await loadKeys();
+    }catch(error){if(usersState===state)message('users-message',error.message,'error');}
+  });
+});
+
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(token)loadKeys();else refreshConfig();}});
 setInterval(()=>{if(base && !document.hidden && !token)refreshConfig();},60000);
 setDuration(); refreshConfig();
