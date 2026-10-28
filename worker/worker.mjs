@@ -133,6 +133,7 @@ function licenseView(row, now) {
   const previousStatus = row.revoked_at !== null ? 'revoked' : row.expires_at !== null && row.expires_at <= now ? 'expired' : row.paused_at !== null ? 'paused' : 'active';
   return { id: row.id, product: row.product, displayKey: row.display_key, label: row.label,
     createdAt: row.created_at, expiresAt: row.expires_at, pausedAt: row.paused_at, revokedAt: row.revoked_at,
+    maxUsers: row.max_users ?? null, userCount: Number(row.user_count || 0),
     deletedAt: row.deleted_at, canCopy: Boolean(row.key_ciphertext) && row.deleted_at === null,
     status: row.deleted_at !== null ? 'deleted' : previousStatus, previousStatus };
 }
@@ -149,6 +150,7 @@ async function ensureSchema(env) {
       if (migrateLegacy) changes.push(env.DB.prepare("ALTER TABLE licenses ADD COLUMN product TEXT NOT NULL DEFAULT 'scripts' CHECK (product IN ('scripts', '8ball', 'freefire'))"));
       if (!columns.has('key_ciphertext')) changes.push(env.DB.prepare('ALTER TABLE licenses ADD COLUMN key_ciphertext TEXT'));
       if (!columns.has('deleted_at')) changes.push(env.DB.prepare('ALTER TABLE licenses ADD COLUMN deleted_at INTEGER'));
+      if (!columns.has('max_users')) changes.push(env.DB.prepare('ALTER TABLE licenses ADD COLUMN max_users INTEGER CHECK (max_users IS NULL OR max_users BETWEEN 1 AND 1000)'));
       if (migrateLegacy) changes.push(env.DB.prepare('UPDATE licenses SET deleted_at = ?, updated_at = ? WHERE deleted_at IS NULL').bind(nowSeconds(), nowSeconds()));
       if (changes.length) {
         try { await env.DB.batch(changes); }
@@ -156,10 +158,15 @@ async function ensureSchema(env) {
           // Another isolate may have completed the same atomic migration first.
           if (!/duplicate column name/i.test(String(error?.message))) throw error;
           const complete = new Set((await env.DB.prepare('PRAGMA table_info(licenses)').all()).results.map(row => row.name));
-          if (!['product','key_ciphertext','deleted_at'].every(name => complete.has(name))) throw error;
+          if (!['product','key_ciphertext','deleted_at','max_users'].every(name => complete.has(name))) throw error;
         }
       }
       await env.DB.prepare('CREATE INDEX IF NOT EXISTS licenses_product_created ON licenses(product, deleted_at, created_at DESC)').run();
+      await env.DB.prepare(`CREATE TABLE IF NOT EXISTS license_users (
+        id TEXT PRIMARY KEY, license_id TEXT NOT NULL REFERENCES licenses(id), device_hash TEXT NOT NULL,
+        user_name TEXT NOT NULL, created_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, revoked_at INTEGER,
+        UNIQUE(license_id,device_hash))`).run();
+      await env.DB.prepare('CREATE INDEX IF NOT EXISTS license_users_active ON license_users(license_id,revoked_at,created_at)').run();
     })();
     schemaPromises.set(env.DB, promise);
     promise.catch(() => schemaPromises.delete(env.DB));
@@ -223,15 +230,58 @@ async function publicConfig(env) {
   if (Boolean(siteKey) !== Boolean(env.TURNSTILE_SECRET_KEY)) fail(503, 'NOT_CONFIGURED', 'Verificação do serviço não configurada.');
   const state = await settings(env);
   return { ...state, publicGeneration: false, products: Object.values(PRODUCTS),
-    keyHours: hours, checkAfterSeconds, turnstileSiteKey: siteKey };
+    keyHours: hours, checkAfterSeconds, turnstileSiteKey: siteKey, userLimits: true, maxUserLimit: 1000 };
 }
-async function issueKey(env, product, label, seconds, now) {
+function userLimit(value) {
+  if (value === null) return null;
+  if (!Number.isInteger(value) || value < 1 || value > 1000) fail(400,'USER_LIMIT_INVALID','Informe um limite inteiro de 1 a 1000 usuários.');
+  return value;
+}
+function userIdentity(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail(400,'KEY_REGISTRATION_REQUIRED','Informe seu nome no aplicativo atualizado para vincular este aparelho.');
+  const name = typeof value.name === 'string' ? value.name.normalize('NFKC').trim() : '';
+  if (!/^[\p{L}\p{N}][\p{L}\p{M}\p{N} ._-]{1,39}$/u.test(name)) fail(400,'USER_NAME_INVALID','Use um nome de 2 a 40 caracteres, com letras, números, espaço, ponto, traço ou sublinhado.');
+  if (typeof value.deviceId !== 'string' || !/^[a-f0-9]{64}$/.test(value.deviceId)) fail(400,'DEVICE_INVALID','Não foi possível identificar este aparelho. Abra o aplicativo novamente.');
+  return {name,deviceId:value.deviceId};
+}
+function registeredUser(row) {
+  return {id:row.id,name:row.user_name,device:row.id.slice(0,8),createdAt:row.created_at,lastSeenAt:row.last_seen_at,
+    removedAt:row.revoked_at,status:row.revoked_at === null ? 'active' : 'removed'};
+}
+async function registerUser(request,env,row,input,now) {
+  if (input === undefined && row.max_users === null) return null; // Existing unlimited clients remain compatible.
+  const user = userIdentity(input);
+  await rateLimit(request,env,'verify-user',120,60,now);
+  const deviceHash = await sha256(row.id + ':' + user.deviceId);
+  // The capacity check and insertion are ONE SQLite statement. Parallel first
+  // logins cannot both claim the final seat; an existing device can re-enter.
+  const binding = await env.DB.prepare(`INSERT INTO license_users(id,license_id,device_hash,user_name,created_at,last_seen_at)
+    SELECT ?,l.id,?,?,?,? FROM licenses l WHERE l.id = ? AND l.deleted_at IS NULL AND l.revoked_at IS NULL
+      AND l.paused_at IS NULL AND (l.expires_at IS NULL OR l.expires_at > ?)
+      AND (EXISTS(SELECT 1 FROM license_users u WHERE u.license_id=l.id AND u.device_hash=? AND u.revoked_at IS NULL)
+        OR (NOT EXISTS(SELECT 1 FROM license_users u WHERE u.license_id=l.id AND u.device_hash=?)
+          AND (l.max_users IS NULL OR (SELECT COUNT(*) FROM license_users u WHERE u.license_id=l.id AND u.revoked_at IS NULL)<l.max_users)))
+    ON CONFLICT(license_id,device_hash) DO UPDATE SET user_name=excluded.user_name,last_seen_at=excluded.last_seen_at
+      WHERE license_users.revoked_at IS NULL
+    RETURNING id,user_name,created_at,last_seen_at,revoked_at`)
+    .bind(crypto.randomUUID(),deviceHash,user.name,now,now,row.id,now,deviceHash,deviceHash).first();
+  if (!binding) {
+    const previous=await env.DB.prepare('SELECT revoked_at FROM license_users WHERE license_id=? AND device_hash=?').bind(row.id,deviceHash).first();
+    if (previous?.revoked_at !== null && previous) fail(403,'KEY_USER_REMOVED','Este aparelho foi removido desta key pelo administrador.');
+    const current=await env.DB.prepare('SELECT max_users,deleted_at,revoked_at,paused_at,expires_at FROM licenses WHERE id=?').bind(row.id).first();
+    if (!current || current.deleted_at!==null || current.revoked_at!==null || current.paused_at!==null || current.expires_at!==null && current.expires_at<=now) fail(403,'KEY_UNAVAILABLE','Esta key não está disponível.');
+    fail(403,'KEY_USER_LIMIT','O limite de usuários desta key foi atingido.');
+  }
+  const count=await env.DB.prepare('SELECT COUNT(*) AS count FROM license_users WHERE license_id=? AND revoked_at IS NULL').bind(row.id).first();
+  return {...registeredUser(binding),used:count.count,max:row.max_users};
+}
+async function issueKey(env, product, label, seconds, now, maxUsers) {
   const key = newKey(product), id = crypto.randomUUID(), expiresAt = seconds === null ? null : now + seconds;
   const displayKey = key.slice(0, PRODUCTS[product].prefix.length + 6) + '…' + key.slice(-6);
   const encrypted = await encryptKey(env, key, id, product);
-  await env.DB.prepare(`INSERT INTO licenses(id, key_hash, display_key, label, created_at, expires_at, product, key_ciphertext)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(id, await sha256(key), displayKey, label, now, expiresAt, product, encrypted).run();
-  return json({ ok: true, key, license: { id, product, displayKey, label, createdAt: now, expiresAt, status: 'active', canCopy: true } }, 201);
+  await env.DB.prepare(`INSERT INTO licenses(id, key_hash, display_key, label, created_at, expires_at, product, key_ciphertext, max_users)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(id, await sha256(key), displayKey, label, now, expiresAt, product, encrypted, maxUsers).run();
+  return json({ ok: true, key, license: { id, product, displayKey, label, createdAt: now, expiresAt, status: 'active', canCopy: true, maxUsers, userCount: 0 } }, 201);
 }
 async function route(request, env) {
   const url = new URL(request.url), now = nowSeconds();
@@ -243,7 +293,7 @@ async function route(request, env) {
     if (!env.DB || !validPasswordHash(env.ADMIN_PASSWORD_HASH)) fail(503, 'NOT_CONFIGURED', 'O serviço ainda está sendo configurado.');
     await env.DB.prepare('SELECT id FROM licenses LIMIT 1').first();
     const config = await publicConfig(env);
-    return json({ ok: true, service: 'cpioa-keys', accessPaused: config.accessPaused, publicGeneration: config.publicGeneration });
+    return json({ ok: true, service: 'cpioa-keys', accessPaused: config.accessPaused, publicGeneration: config.publicGeneration, userLimits: true });
   }
   if (!env.DB || !validPasswordHash(env.ADMIN_PASSWORD_HASH)) fail(503, 'NOT_CONFIGURED', 'O serviço ainda está sendo configurado.');
   if (url.pathname === '/v1/config' && request.method === 'GET') return json({ ok: true, ...await publicConfig(env) });
@@ -265,14 +315,15 @@ if (url.pathname === '/v1/verify' && request.method === 'POST') {
     if (productOf(key) !== product) fail(401, 'KEY_WRONG_APP', 'Esta key pertence a outro painel.');
     const config = await publicConfig(env);
     if (config.accessPaused) fail(403, 'ACCESS_PAUSED', 'O acesso ao Cpioa está temporariamente pausado.');
-    const row = await env.DB.prepare('SELECT id, expires_at, revoked_at, paused_at, deleted_at, product FROM licenses WHERE key_hash = ?').bind(await sha256(key)).first();
+    const row = await env.DB.prepare('SELECT id, expires_at, revoked_at, paused_at, deleted_at, product, max_users FROM licenses WHERE key_hash = ?').bind(await sha256(key)).first();
     if (!row) { await rateLimit(request, env, 'verify-invalid', 30, 60, now); fail(401, 'KEY_INVALID', 'Key inválida.'); }
     if (row.product !== product) fail(401, 'KEY_WRONG_APP', 'Esta key pertence a outro painel.');
     if (row.deleted_at !== null) fail(401, 'KEY_DELETED', 'Esta key foi excluída.');
     if (row.revoked_at !== null) fail(401, 'KEY_REVOKED', 'Esta key foi revogada.');
     if (row.expires_at !== null && row.expires_at <= now) fail(401, 'KEY_EXPIRED', 'Esta key expirou.');
     if (row.paused_at !== null) fail(403, 'KEY_PAUSED', 'Esta key está pausada.');
-    return json({ ok: true, license: { id: row.id, product, expiresAt: row.expires_at, status: 'active' }, serverTime: now,
+    const registration=await registerUser(request,env,row,body.user,now);
+    return json({ ok: true, registration, license: { id: row.id, product, expiresAt: row.expires_at, status: 'active', maxUsers: row.max_users }, serverTime: now,
       checkAfterSeconds: row.expires_at === null ? config.checkAfterSeconds : Math.max(1, Math.min(config.checkAfterSeconds, row.expires_at - now)) });
   }
   if (!url.pathname.startsWith('/v1/admin/')) fail(404, 'NOT_FOUND', 'Endereço não encontrado.');
@@ -296,7 +347,7 @@ if (url.pathname === '/v1/admin/products' && request.method === 'GET') return js
     const body = await bodyJson(request), product = requireProduct(body.product);
     const label = typeof body.label === 'string' ? body.label.trim() : '';
     if (label.length > 60 || /[\u0000-\u001f]/.test(label)) fail(400, 'LABEL_INVALID', 'Use uma identificação de até 60 caracteres.');
-    return issueKey(env, product, label, durationSeconds(body), now);
+    return issueKey(env, product, label, durationSeconds(body), now, userLimit(Object.hasOwn(body,'maxUsers') ? body.maxUsers : null));
   }
   if (url.pathname === '/v1/admin/keys' && request.method === 'GET') {
     const product = requireProduct(url.searchParams.get('product') || 'scripts');
@@ -314,7 +365,7 @@ if (url.pathname === '/v1/admin/products' && request.method === 'GET') return js
     if (status === 'revoked') conditions.push('revoked_at IS NOT NULL');
     const where = ' WHERE ' + conditions.join(' AND ');
     const [rows,total,stats] = await env.DB.batch([
-      env.DB.prepare('SELECT * FROM licenses' + where + ' ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?').bind(...args,PAGE_SIZE,(page-1)*PAGE_SIZE),
+      env.DB.prepare('SELECT *, (SELECT COUNT(*) FROM license_users u WHERE u.license_id=licenses.id AND u.revoked_at IS NULL) AS user_count FROM licenses' + where + ' ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?').bind(...args,PAGE_SIZE,(page-1)*PAGE_SIZE),
       env.DB.prepare('SELECT COUNT(*) AS count FROM licenses' + where).bind(...args),
       env.DB.prepare(`SELECT COALESCE(SUM(deleted_at IS NULL),0) AS total,
         COALESCE(SUM(deleted_at IS NULL AND revoked_at IS NULL AND paused_at IS NULL AND (expires_at IS NULL OR expires_at > ?)),0) AS active,
@@ -325,6 +376,47 @@ if (url.pathname === '/v1/admin/products' && request.method === 'GET') return js
     ]);
     return json({ ok:true, items: rows.results.map(row=>licenseView(row,now)), total:total.results[0].count,
       page,pageSize:PAGE_SIZE,stats:stats.results[0],products:await gameStats(env,now),settings:await publicConfig(env) });
+  }
+  const usersRoute=/^\/v1\/admin\/keys\/([a-f0-9-]{36})\/users$/.exec(url.pathname);
+  if (usersRoute && request.method==='GET') {
+    const product=requireProduct(url.searchParams.get('product'));
+    const row=await env.DB.prepare('SELECT * FROM licenses WHERE id=? AND product=?').bind(usersRoute[1],product).first();
+    if (!row) fail(404,'KEY_NOT_FOUND','Key não encontrada neste painel.');
+    const users=(await env.DB.prepare('SELECT id,user_name,created_at,last_seen_at,revoked_at FROM license_users WHERE license_id=? ORDER BY revoked_at IS NOT NULL,created_at,id').bind(row.id).all()).results;
+    return json({ok:true,license:licenseView({...row,user_count:users.filter(user=>user.revoked_at===null).length},now),users:users.map(registeredUser)});
+  }
+  const limitRoute=/^\/v1\/admin\/keys\/([a-f0-9-]{36})\/user-limit$/.exec(url.pathname);
+  if (limitRoute && request.method==='POST') {
+    const body=await bodyJson(request),product=requireProduct(body.product),limit=userLimit(body.maxUsers);
+    const changed=await env.DB.prepare(`UPDATE licenses SET max_users=?,updated_at=? WHERE id=? AND product=? AND deleted_at IS NULL
+      AND (? IS NULL OR (SELECT COUNT(*) FROM license_users u WHERE u.license_id=licenses.id AND u.revoked_at IS NULL)<=?) RETURNING id`)
+      .bind(limit,now,limitRoute[1],product,limit,limit).first();
+    if (!changed) {
+      const row=await env.DB.prepare('SELECT deleted_at FROM licenses WHERE id=? AND product=?').bind(limitRoute[1],product).first();
+      if (!row) fail(404,'KEY_NOT_FOUND','Key não encontrada neste painel.');
+      if (row.deleted_at!==null) fail(409,'KEY_UNAVAILABLE','Restaure a key antes de alterar o limite.');
+      fail(409,'USER_LIMIT_BELOW_USAGE','Remova usuários antes de reduzir o limite abaixo das vagas ocupadas.');
+    }
+    return json({ok:true,maxUsers:limit});
+  }
+  const userAction=/^\/v1\/admin\/keys\/([a-f0-9-]{36})\/users\/([a-f0-9-]{36})\/(remove|restore)$/.exec(url.pathname);
+  if (userAction && request.method==='POST') {
+    const body=await bodyJson(request),product=requireProduct(body.product);
+    const license=await env.DB.prepare('SELECT * FROM licenses WHERE id=? AND product=?').bind(userAction[1],product).first();
+    if (!license) fail(404,'KEY_NOT_FOUND','Key não encontrada neste painel.');
+    if (license.deleted_at!==null) fail(409,'KEY_UNAVAILABLE','Restaure a key antes de alterar seus usuários.');
+    const user=await env.DB.prepare('SELECT * FROM license_users WHERE id=? AND license_id=?').bind(userAction[2],license.id).first();
+    if (!user) fail(404,'USER_NOT_FOUND','Usuário não encontrado nesta key.');
+    if (userAction[3]==='remove') {
+      await env.DB.prepare('UPDATE license_users SET revoked_at=COALESCE(revoked_at,?) WHERE id=? AND license_id=?').bind(now,user.id,license.id).run();
+    } else if (user.revoked_at!==null) {
+      const restored=await env.DB.prepare(`UPDATE license_users SET revoked_at=NULL WHERE id=? AND license_id=?
+        AND EXISTS(SELECT 1 FROM licenses l WHERE l.id=license_users.license_id AND (l.max_users IS NULL OR
+          (SELECT COUNT(*) FROM license_users u WHERE u.license_id=l.id AND u.revoked_at IS NULL)<l.max_users)) RETURNING id`)
+        .bind(user.id,license.id).first();
+      if (!restored) fail(409,'KEY_USER_LIMIT','A key não tem vaga livre para reativar este usuário.');
+    }
+    return json({ok:true,status:userAction[3]==='remove'?'removed':'active'});
   }
   const action = /^\/v1\/admin\/keys\/([a-f0-9-]{36})\/(copy|delete|restore|pause|resume|revoke)$/.exec(url.pathname);
   if (action && request.method === 'POST') {
